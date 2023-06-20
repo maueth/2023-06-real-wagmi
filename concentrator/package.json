@@ -1,0 +1,27 @@
+{
+  "name": "multipool",
+  "description": "Core smart contracts of RealWagmi",
+  "scripts": {
+    "compile": "hardhat clean && hardhat compile",
+    "test": "npx hardhat test --show-stack-traces --typecheck",
+    "test:fulltraceError": "npx hardhat test --vv --typecheck",
+    "test:coverage": "npx hardhat coverage  --testfiles 'test/*.ts'",
+    "deploy:polygon": "npx hardhat run --network polygon ./scripts/deploy.ts",
+    "slots": "npx hardhat run check",
+    "lint": "prettier --write 'contracts/**/*.sol' && prettier --write 'scripts/**/*.ts' && prettier --write 'test/**/*.ts'",
+    "lint:windows": "prettier --write contracts/**/*.sol && prettier --write scripts/**/*.ts && prettier --write test/**/*.ts"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^2.0.2",
+    "@openzeppelin/contracts": "4.8.2",
+    "@uniswap/v3-core": "1.0.1",
+    "@uniswap/v3-periphery": "1.4.3",
+    "@primitivefi/hardhat-dodoc": "^0.2.3",
+    "dotenv": "^16.0.3",
+    "hardhat": "^2.13.0",
+    "hardhat-gas-trackooor": "^1.0.2",
+    "hardhat-storage-layout": "^0.1.7",
+    "hardhat-tracer": "^2.2.2",
+    "prettier-plugin-solidity": "^1.1.3"
+  }
+}
