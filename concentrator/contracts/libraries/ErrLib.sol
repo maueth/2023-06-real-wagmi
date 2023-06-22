@@ -40,6 +40,7 @@ library ErrLib {
 
     error RevertErrorCode(ErrorCode code);
 
+    // @audit-info not possible to get revert error code when unit test (bad approach)
     function requirement(bool condition, ErrorCode code) internal pure {
         if (!condition) {
             revert RevertErrorCode(code);

@@ -12,7 +12,7 @@ import "./interfaces/ICode.sol";
 import { MultiStrategy } from "./MultiStrategy.sol";
 
 contract Factory is Ownable, IFactory {
-    uint256 public constant MINIMUM_AMOUNT = 1000_000;
+    uint256 public constant MINIMUM_AMOUNT = 1000_000; // @audit is 1e6, it is correct ?
     /**
      * @dev Immutable address of the Uniswap V3 Factory contract.
      */
@@ -27,6 +27,7 @@ contract Factory is Ownable, IFactory {
     /**
      * @dev Mapping of token pairs to associated Multipool contracts.
      */
+    // @audit-info multipool => (tokenA => tokenB)
     mapping(address => mapping(address => address)) private multipools;
     /**
      * @dev Event emitted when a new Multipool contract is created.
@@ -50,7 +51,7 @@ contract Factory is Ownable, IFactory {
     constructor(address _underlyingV3Factory, address _multipoolCode, address _dispatcherCode) {
         underlyingV3Factory = _underlyingV3Factory;
         multipoolCode = IMultiPoolCode(_multipoolCode);
-        bytes32 salt = keccak256(abi.encode(block.timestamp, address(this)));
+        bytes32 salt = keccak256(abi.encode(block.timestamp, address(this))); // @audit why use salt ?
         bytes memory bytecode = IDispatcherCode(_dispatcherCode).getDispatcherCode();
         dispatcher = IDispatcher(deploy(salt, bytecode));
     }
@@ -79,6 +80,7 @@ contract Factory is Ownable, IFactory {
         address manager,
         uint24[] memory fees
     ) external onlyOwner returns (address multipool) {
+        // @audit missing params sanity check
         require(manager != address(0), "manager is zero address");
         require(getmultipool(token0, token1) == address(0), "already created");
         (token0, token1) = _validateTokens(token0, token1);
