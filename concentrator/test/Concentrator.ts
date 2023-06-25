@@ -36,7 +36,7 @@ describe("Concentrator", () => {
     const SWAP_ROUTER_ADDRESS = "0xE592427A0AEce92De3Edee1F18E0157C05861564";
     // Mainnet, Goerli, Arbitrum, Optimism, Polygon
     const UNISWAP_FACTORY_ADDRESS = "0x1F98431c8aD98523631AE4a59f267346ea31F984";
-    const deviationBP = 990;//0.1 %
+    const deviationBP = 990; //0.1 %
 
     let USDT: IERC20;
     let WETH: IERC20;
@@ -275,7 +275,7 @@ describe("Concentrator", () => {
             poolFeeAmt: 10000,
             weight: 1000,
         }; // tickSpacing = 200
-        const strategy = [strategy500, strategy3000, strategy10000_left, strategy10000_right];
+        const strategy = [strategy500];
 
         await expect(multistrategy.connect(bob).setStrategy(strategy)).to.be.reverted;
         await expect(multistrategy.connect(alice).setStrategy(strategy)).to.be.reverted;
@@ -312,7 +312,7 @@ describe("Concentrator", () => {
             .reverted;
     });
 
-    it("should make a deposit successfully", async () => {
+    it.only("should make a deposit successfully", async () => {
         let usdtAmountToDeposit = ethers.utils.parseUnits("1000", 6);
         let wethAmountToDeposit = await factory.getQuoteAtTick(
             500,

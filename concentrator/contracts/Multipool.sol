@@ -13,7 +13,7 @@ import { ErrLib } from "./libraries/ErrLib.sol";
 import { IMultiStrategy } from "./interfaces/IMultiStrategy.sol";
 import "@uniswap/v3-core/contracts/interfaces/IUniswapV3Factory.sol";
 
-// import "hardhat/console.sol";
+import "hardhat/console.sol";
 
 contract Multipool is Ownable, ERC20 {
     error InvalidManaging();
@@ -122,10 +122,12 @@ contract Multipool is Ownable, ERC20 {
         string memory _symbol,
         uint24[] memory _fees
     ) ERC20(_name, _symbol) {
+        // @audit-ok params sanity check
         IUniswapV3Factory factory = IUniswapV3Factory(_underlyingV3Factory);
 
         for (uint256 i = 0; i < _fees.length; ) {
-            _addUnderlyingPool(_fees[i], _token0, _token1, factory);
+            // @audit-issue can pass array of fees if one of the fees is deleted it will stop from work in one of the for loops
+            _addUnderlyingPool(_fees[i], _token0, _token1, factory); 
             unchecked {
                 ++i;
             }
@@ -138,7 +140,8 @@ contract Multipool is Ownable, ERC20 {
         token0 = _token0;
         token1 = _token1;
 
-        _transferOwnership(manager);
+        // @audit-issue if manager is wrong will have to redeploy 
+        _transferOwnership(manager); 
         operator = manager;
     }
 
@@ -157,8 +160,9 @@ contract Multipool is Ownable, ERC20 {
         uint24 _fee,
         address _token0,
         address _token1,
-        IUniswapV3Factory _factory
+        IUniswapV3Factory _factory // @audit-ok do not need to be sent is an immutable param
     ) private {
+        // @audit-info returns the pool address for a given pair of tokens and a fee, or address 0 if it does not exist
         address poolAddress = _factory.getPool(_token0, _token1, _fee);
 
         if (poolAddress == address(0)) {
@@ -168,8 +172,28 @@ contract Multipool is Ownable, ERC20 {
             tickSpacing: IUniswapV3Pool(poolAddress).tickSpacing(),
             poolAddress: poolAddress
         });
-        fees.push(_fee);
-        emit TrustedPoolAdded(_fee, poolAddress);
+        // @audit-info store the fees 
+        /*
+            @audit-issue if the fee value is already saved in the array it will be added again, 
+            it will not be overwritten
+
+            In the provided _addUnderlyingPool function, when adding a new pool to the underlyingTrustedPools mapping, if the _fee parameter already exists as a key in the mapping, 
+            the existing value will be overwritten with the new UnderlyingPool struct. However, the same _fee value will be added again to the fees array without checking for duplicates.
+
+            This behavior can lead to a couple of consequences:
+
+            Redundant Storage: If the _fee value already exists in the underlyingTrustedPools mapping, overwriting the existing value may result in the loss of previously stored 
+            information associated with that fee. This could lead to inconsistencies or unintended behavior if other parts of the code rely on the overwritten value.
+
+            Duplicate Fees: Adding the same _fee value again to the fees array without checking for duplicates can lead to redundant entries. This means that the same fee may appear 
+            multiple times in the fees array, which can result in inefficient usage of storage and potentially cause issues when iterating or processing the array. Additionally, 
+            it might give a false impression that there are more unique fees than there actually are.
+
+            To mitigate these consequences, it is recommended to add checks to ensure that the _fee value is not already present in underlyingTrustedPools before overwriting it. 
+            Additionally, you may want to include logic to avoid adding duplicate _fee values to the fees array. This can be done by checking if the value already exists in the array before appending it.
+        */ 
+        fees.push(_fee); 
+        emit TrustedPoolAdded(_fee, poolAddress); // @audit-issue create another event for update ?
     }
 
     function _safeTransfer(address token, address to, uint256 value) private {
@@ -186,6 +210,7 @@ contract Multipool is Ownable, ERC20 {
         (bool success, bytes memory data) = token.call(
             abi.encodeWithSelector(IERC20.transferFrom.selector, from, to, value)
         );
+        // @audit-issue There is any token where the return can have data length ?
         ErrLib.requirement(
             success && (data.length == 0 || abi.decode(data, (bool))),
             ErrLib.ErrorCode.ERC20_TRANSFER_FROM_DID_NOT_SUCCEED
@@ -218,8 +243,8 @@ contract Multipool is Ownable, ERC20 {
             uint256 _totalSupply
         )
     {
-        _totalSupply = totalSupply();
-        _earn(_totalSupply);
+        _totalSupply = totalSupply(); 
+        _earn(_totalSupply); 
         Slot0Data[] memory slots = getSlots();
         (reserve0, reserve1, , ) = _getReserves(slots);
         feesGrow = feesGrowthInsideLastX128;
@@ -236,9 +261,10 @@ contract Multipool is Ownable, ERC20 {
         _earn(_totalSupply);
     }
 
+    // @audit-info collect fee from liquidity pool
     function _earn(uint256 _totalSupply) private {
         if (_totalSupply > 0) {
-            _withdraw(0, _totalSupply);
+            _withdraw(0, _totalSupply); // @audit-issue is not possible to withdraw when lpAmount is 0
         }
     }
 
@@ -270,9 +296,10 @@ contract Multipool is Ownable, ERC20 {
     }
 
     function _initializeStrategy() private returns (Slot0Data[] memory) {
-        uint256 positionsNum = strategy.strategySize();
+        uint256 positionsNum = strategy.strategySize(); //@audit-info size of strategies array
+        console.log('positionsNum ', positionsNum);
         ErrLib.requirement(positionsNum > 0, ErrLib.ErrorCode.STRATEGY_DOES_NOT_EXIST);
-        delete multiPosition;
+        delete multiPosition; 
         PositionInfo memory position;
         int24 upperTick;
         int24 lowerTick;
@@ -325,6 +352,7 @@ contract Multipool is Ownable, ERC20 {
         );
     }
 
+    // @audit-info updates and distributes the accumulated fees per share and accumulated fees with weight per share for token0
     function _upFeesGrowth(uint256 fee0, uint256 fee1, uint256 _totalSupply) private {
         feesGrowthInsideLastX128.gmiAccPerShare0 += FullMath.mulDiv(
             fee0,
@@ -363,12 +391,18 @@ contract Multipool is Ownable, ERC20 {
         uint256 _totalSupply,
         Slot0Data[] memory slots
     ) private {
+        console.log('\n---start _deposit');
         uint128 liquidity;
         uint256 fee0;
         uint256 fee1;
         uint256 posNum = multiPosition.length;
         PositionInfo memory position;
+        console.log('posNum ', posNum);
+
         for (uint256 i = 0; i < posNum; ) {
+            console.log('\n--i ', i);
+
+            // @audit issue sloc and multiPosition can have different length
             position = multiPosition[i];
 
             liquidity = _calcLiquidityAmountToDeposit(
@@ -377,18 +411,26 @@ contract Multipool is Ownable, ERC20 {
                 amount0Desired,
                 amount1Desired
             );
+            console.log('liquidity  ', liquidity);
+
             if (liquidity > 0) {
                 (, , , uint128 tokensOwed0Before, uint128 tokensOwed1Before) = IUniswapV3Pool(
                     position.poolAddress
                 ).positions(position.positionKey);
+                console.log('tokensOwed0Before ', tokensOwed0Before);
 
+                console.logInt(int(position.lowerTick));
+                console.logInt(int(position.upperTick));
+                console.log('liquidity ', liquidity);
+                console.log('position.poolFeeAmt ', position.poolFeeAmt);
                 IUniswapV3Pool(position.poolAddress).mint(
                     address(this), //recipient
                     position.lowerTick,
                     position.upperTick,
-                    liquidity,
+                    1,
                     abi.encode(position.poolFeeAmt)
                 );
+                console.log('end mint');
 
                 (, , , uint128 tokensOwed0After, uint128 tokensOwed1After) = IUniswapV3Pool(
                     position.poolAddress
@@ -430,6 +472,10 @@ contract Multipool is Ownable, ERC20 {
      * @param amount1Min The minimum amount of token1 required to be deposited.
      * @return lpAmount Returns the amount of liquidity tokens created.
      */
+    /*
+        @audit-info handle the deposit of liquidity into the pool. Allows a user to deposit desired amounts of token0 and token1 
+        into the liquidity pool and receive an equivalent amount of liquidity pool tokens (lpAmount) in return. 
+    */
     function deposit(
         // TODO:  PAUSED + Max CAPS
         uint256 amount0Desired,
@@ -437,25 +483,95 @@ contract Multipool is Ownable, ERC20 {
         uint256 amount0Min,
         uint256 amount1Min
     ) external returns (uint256 lpAmount) {
+        console.log('\n---start deposit');
+
+        console.log('amount0Desired ', amount0Desired, MINIMUM_AMOUNT);
+        console.log('amount1Desired ', amount1Desired, MINIMUM_AMOUNT);
+        
+        // @audit-info min amount check (min amount is 1e6)
+        /*
+            @audit-issue min amount is 1e6 if amount0Desired is 1e18 can be break?
+            the client will have to make sure to convert any amount desired to 6 decimals
+        */
         ErrLib.requirement(
-            amount0Desired > MINIMUM_AMOUNT && amount1Desired > MINIMUM_AMOUNT,
+            amount0Desired > MINIMUM_AMOUNT && amount1Desired > MINIMUM_AMOUNT, 
             ErrLib.ErrorCode.AMOUNT_TOO_SMALL
         );
-        uint256 _totalSupply = totalSupply();
-        Slot0Data[] memory slots;
 
+        uint256 _totalSupply = totalSupply();
+        console.log('_totalSupply ', _totalSupply);
+
+        Slot0Data[] memory slots;
+       
+        console.log('_totalSupply == 0 ', _totalSupply == 0);
+        // @audit-info if totalAmount is 0 should be make first deposit
         if (_totalSupply == 0) {
             ErrLib.requirement(
                 msg.sender == owner(),
                 ErrLib.ErrorCode.FIRST_DEPOSIT_SHOULD_BE_MAKE_BY_OWNER
             );
-            // fetched from Uniswap codebase
-            lpAmount = Babylonian.sqrt(amount0Desired * amount1Desired) - MINIMUM_LIQUIDITY;
+
+            /*
+                @audit-ok (first if condition - check the second)
+                Depositing 1.1 USD
+
+                DAI/USDC
+                DAI (1e18)
+                USDC (1e6)
+                1099999999000
+
+                DAI/USDC
+                USDC (1e6)
+                USDT (1e6)
+                1099000
+
+                The lpAmount calculation does not take into account that 
+                stabe coins can have different decimals
+
+                If the pair is DAI/USDC the lpAmount will be 1099999999000 
+                for 1.1 USD (1.1 to pass the first require)
+
+                If the pair is USDC/USDT the lpAmount will be 1099000 
+                for 1.1 USD (1.1 to pass the first require)
+
+                The value between the two examples will be the same 1.1 USD, 
+                but the DAI/USDC will have more lpAmount
+
+                DAI/USDC
+                maxTotalSupply = 1e20 =   100000000000000000000
+                _totalSupply + lpAmount =         1099999999000
+                0,0000011% of Total Supply
+
+                USDC/USDT
+                maxTotalSupply = 1e20 =   100000000000000000000
+                _totalSupply + lpAmount =               1099000
+                0,0000000000011% of Total Supply
+            */ 
+            lpAmount = Babylonian.sqrt(amount0Desired * amount1Desired) - MINIMUM_LIQUIDITY;  // @audit-info minimum liquidity 1e3
+            console.log('Babylonian.sqrt(amount0Desired * amount1Desired) ', Babylonian.sqrt(amount0Desired * amount1Desired)); 
+            console.log('lpAmount ', lpAmount); 
+           
             _mint(burnAddress, MINIMUM_LIQUIDITY); // permanently lock the first MINIMUM_LIQUIDITY tokens
-            slots = _initializeStrategy();
+            
+            // @audit-info initialize the strategy by setting up the positions with their associated pool addresses, ticks, and other relevant data.
+            slots = _initializeStrategy(); 
+            console.log('slots'); 
         } else {
-            slots = getSlots();
+
+            // @audit-info returns the current sqrt price and tick from every opened position
+            slots = getSlots(); 
+
+            /*
+                @audit-info determine the accurate reserves of token0 and token1, taking into account the positions in the Uniswap V3 pool and the associated fees
+                it provides a comprehensive view of the available liquidity and balances in the contract
+            */ 
             (uint256 reserve0, uint256 reserve1, , ) = _getReserves(slots);
+            
+            /*
+                @audit-info ensure that the trade amounts are optimized based on the available reserves in the liquidity pool.
+                It calculates the optimal trade amounts to minimize slippage and ensures that the desired trade amounts meet 
+                the specified minimum requirements
+            */
             (amount0Desired, amount1Desired) = _optimizeAmounts(
                 amount0Desired,
                 amount1Desired,
@@ -464,29 +580,65 @@ contract Multipool is Ownable, ERC20 {
                 reserve0,
                 reserve1
             );
+
             // MINIMUM
-            uint256 l0 = (amount0Desired * _totalSupply) / reserve0;
+            /*
+                @audit-info calculate the minimum amount of liquidity (lpAmount) required to be deposited into a liquidity
+                pool in order to satisfy the desired trade amounts of token0 (amount0Desired) and token1 (amount1Desired)
+            */
+           //
+            uint256 l0 = (amount0Desired * _totalSupply) / reserve0; 
             uint256 l1 = (amount1Desired * _totalSupply) / reserve1;
             lpAmount = l0 < l1 ? l0 : l1;
         }
 
+        /*
+            @audit-info ensure that a valid and non-zero amount of liquidity is being minted, and that the resulting 
+            total supply after minting does not exceed a maximum limit set by maxTotalSupply
+        */
         ErrLib.requirement(lpAmount > 0, ErrLib.ErrorCode.INSUFFICIENT_LIQUIDITY_MINTED);
+        
+        console.log('maxTotalSupply ', maxTotalSupply);
+        console.log('_totalSupply ', _totalSupply);
+        console.log('_totalSupply + lpAmount ', _totalSupply + lpAmount);
+        console.log('maxTotalSupply >= _totalSupply + lpAmount ', maxTotalSupply >= _totalSupply + lpAmount); 
+        // @audit-issue can be bypassed if lp amount has misleading precision ?
         ErrLib.requirement(
-            maxTotalSupply >= _totalSupply + lpAmount,
+            maxTotalSupply >= _totalSupply + lpAmount,  // @audit-info max total supply is 1e20
             ErrLib.ErrorCode.MAX_TOTAL_SUPPLY_REACHED
         );
+ // Unsafe downcast
+        /* 
+            @audit-info facilitate the transfer of tokens (value) from one address (payer) to another address (recipient)
+            _safeTransferFrom(token, payer, recipient, value);
+        */
+        /*
+            @audit-issue if possible reentrancy
+        */ 
+        console.log('_pay token0');
         _pay(token0, msg.sender, address(this), amount0Desired);
+        console.log('_pay token1');
         _pay(token1, msg.sender, address(this), amount1Desired);
 
-        _deposit(amount0Desired, amount1Desired, _totalSupply, slots);
-
+        /*
+            @audit-info deposit liquidity into multiple Uniswap V3 positions. It calculates the amount of liquidity (liquidity) 
+            to be deposited based on the desired amounts of token0 and token1 (amount0Desired and amount1Desired) and the current 
+            state of each position (slots[i].currentSqrtRatioX96 and position).
+        */
+        _deposit(amount0Desired, amount1Desired, _totalSupply, slots); // @audit-issue reentrancy deposit and pay ?
+        console.log('end: _deposit');
+        
+        /*
+            @audit-info  mint a specified amount of liquidity tokens (lpAmount) and assign them to the msg.sender
+        */
         _mint(msg.sender, lpAmount);
 
         emit Deposit(msg.sender, amount0Desired, amount1Desired, lpAmount);
     }
 
+    // @audit-info withdraws liquidity from multiple positions
     function _withdraw(
-        uint256 lpAmount,
+        uint256 lpAmount, // 0
         uint256 _totalSupply
     ) private returns (uint256 withdrawnAmount0, uint256 withdrawnAmount1) {
         assert(_totalSupply > 0);
@@ -498,18 +650,24 @@ contract Multipool is Ownable, ERC20 {
             position = multiPosition[i];
 
             {
+                // @audit-info returns the the amount of liquidity owned by this position
                 (uint128 liquidity, , , , ) = IUniswapV3Pool(position.poolAddress).positions(
                     position.positionKey
                 );
 
+                // @audit-info when calling from snapshot the result will always be 0
+                // @audit-issue can overflow ?
                 uint128 liquidityToWithdraw = uint128(
                     (uint256(liquidity) * lpAmount) / _totalSupply
                 );
 
+                // @audit-info returns the fees owed to the position owner in token0/token1
                 (, , , uint128 tokensOwed0Before, uint128 tokensOwed1Before) = IUniswapV3Pool(
                     position.poolAddress
                 ).positions(position.positionKey);
 
+                // @audit-info burns liquidity from the sender and account tokens owed for the liquidity to the position
+                // @audit-info when called by snapshot the liquidityToWithdraw is 0
                 (uint256 amount0, uint256 amount1) = IUniswapV3Pool(position.poolAddress).burn(
                     position.lowerTick,
                     position.upperTick,
@@ -519,6 +677,7 @@ contract Multipool is Ownable, ERC20 {
                 withdrawnAmount0 += amount0;
                 withdrawnAmount1 += amount1;
 
+                // @audit-info returns the fees owed to the position owner in token0/token1
                 (, , , uint128 tokensOwed0After, uint128 tokensOwed1After) = IUniswapV3Pool(
                     position.poolAddress
                 ).positions(position.positionKey);
@@ -527,6 +686,7 @@ contract Multipool is Ownable, ERC20 {
                 fee1 += (tokensOwed1After - amount1) - tokensOwed1Before;
             }
 
+            // @audit-info collects tokens owed to a position
             IUniswapV3Pool(position.poolAddress).collect(
                 address(this),
                 position.lowerTick,
@@ -554,6 +714,10 @@ contract Multipool is Ownable, ERC20 {
      * @return withdrawnAmount0 The amount of token0 received by the caller after the withdrawal.
      * @return withdrawnAmount1 The amount of token1 received by the caller after the withdrawal.
      */
+    /*
+        @audit-info allows the caller to withdraw their share of liquidity from the pool, ensuring 
+        that they receive the expected amounts of tokens while considering price slippage
+    */
     function withdraw(
         uint256 lpAmount,
         uint256 amount0OutMin,
@@ -561,9 +725,16 @@ contract Multipool is Ownable, ERC20 {
     ) external returns (uint256 withdrawnAmount0, uint256 withdrawnAmount1) {
         uint256 _totalSupply = totalSupply();
 
+        // @audit-info handle the withdrawal of liquidity from multiple positions in the pool
         (withdrawnAmount0, withdrawnAmount1) = _withdraw(lpAmount, _totalSupply);
 
         if (lpAmount > 0) {
+
+            /*
+                @audit-info update the withdrawnAmount0 and withdrawnAmount1 variables to 
+                include the proportionate amounts of token0 and token1 that were withdrawn
+                during the liquidity withdrawal process.
+            */
             withdrawnAmount0 +=
                 ((IERC20(token0).balanceOf(address(this)) - withdrawnAmount0) * lpAmount) /
                 _totalSupply;
@@ -571,14 +742,20 @@ contract Multipool is Ownable, ERC20 {
                 ((IERC20(token1).balanceOf(address(this)) - withdrawnAmount1) * lpAmount) /
                 _totalSupply;
 
+            // @audit-info price slippage check after withdrawing liquidity from the pool
             ErrLib.requirement(
                 withdrawnAmount0 >= amount0OutMin && withdrawnAmount1 >= amount1OutMin,
                 ErrLib.ErrorCode.PRICE_SLIPPAGE_CHECK
             );
 
             _burn(msg.sender, lpAmount);
+
+            /*
+                @audit-info facilitate the transfer of tokens (value) from one address (payer) to another address (recipient)
+            */            
             _pay(token0, address(this), msg.sender, withdrawnAmount0);
             _pay(token1, address(this), msg.sender, withdrawnAmount1);
+
             emit Withdraw(msg.sender, withdrawnAmount0, withdrawnAmount1, lpAmount);
         }
     }
@@ -587,6 +764,7 @@ contract Multipool is Ownable, ERC20 {
      * @dev This function returns the current sqrt price and tick from every opened position
      */
     function getSlots() public view returns (Slot0Data[] memory) {
+        // @audit-issue 2 arrays can have different length
         uint256 posNum = multiPosition.length;
         Slot0Data[] memory slots = new Slot0Data[](posNum);
         for (uint256 i = 0; i < posNum; ) {
@@ -700,6 +878,7 @@ contract Multipool is Ownable, ERC20 {
         reserve0 = IERC20(token0).balanceOf(address(this));
         reserve1 = IERC20(token1).balanceOf(address(this));
 
+        // @audit-issue 2 arrays can have different length
         uint256 posNum = multiPosition.length;
         for (uint256 i = 0; i < posNum; ) {
             PositionInfo memory position = multiPosition[i];
@@ -842,6 +1021,10 @@ contract Multipool is Ownable, ERC20 {
      *      with new strategy settings
      * @param params Details for the swap
      * */
+     /*
+        @audit-info rebalance operation by closing all opened positions, swapping tokens if necessary, 
+        and opening new positions with new strategy settings.
+     */
     function rebalanceAll(RebalanceParams calldata params) external nonReentrant {
         ErrLib.requirement(operator == msg.sender, ErrLib.ErrorCode.OPERATOR_NOT_APPROVED);
         ErrLib.requirement(

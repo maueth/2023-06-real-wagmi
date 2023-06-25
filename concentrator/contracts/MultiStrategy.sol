@@ -6,6 +6,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import { ErrLib } from "./libraries/ErrLib.sol";
 import { IUniswapV3Pool } from "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
 import { IMultipool } from "./interfaces/IMultipool.sol";
+import "hardhat/console.sol";
 
 contract MultiStrategy is IMultiStrategy, Ownable {
     event SetNewStrategy(Strategy[] strategy);
@@ -55,7 +56,7 @@ contract MultiStrategy is IMultiStrategy, Ownable {
      * @param _currentStrategy A list of Strategy structs representing the new strategy
      */
     function setStrategy(Strategy[] calldata _currentStrategy) external onlyOwner {
-        delete currentStrategy;
+        delete currentStrategy; 
         uint256 weightSum;
         uint24 checkSortedFee;
         for (uint256 i = 0; i < _currentStrategy.length; ) {
@@ -64,13 +65,15 @@ contract MultiStrategy is IMultiStrategy, Ownable {
                 checkSortedFee <= sPosition.poolFeeAmt,
                 ErrLib.ErrorCode.SHOULD_BE_SORTED_BY_FEE
             );
+
             checkSortedFee = sPosition.poolFeeAmt;
             IMultipool.UnderlyingPool memory uPool = multipool.underlyingTrustedPools(
                 sPosition.poolFeeAmt
-            );
+            );                 
             if (uPool.poolAddress == address(0)) {
                 revert InvalidFee(sPosition.poolFeeAmt);
             }
+   
             _checkpositionsRange(
                 sPosition.positionRange,
                 uPool.tickSpacing,
